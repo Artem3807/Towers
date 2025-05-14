@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tower Defense</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <h1>Tower Defense</h1>
+    <div class="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <div class="ui-panel">
+            <div>Деньги: <span id="money">100</span></div>
+            <div>Волна: <span id="wave">0</span></div>
+            <div>Жизни: <span id="lives">20</span></div>
+            <button id="startWaveButton">Начать волну</button>
+            <div id="tower-selection">
+                <h3>Купить башню:</h3>
+                <button class="tower-button" data-type="basic" data-cost="50">Простая Башня (50)</button>
+                <button class="tower-button" data-type="splash" data-cost="100">Область (100)</button>
+                <button class="tower-button" data-type="sniper" data-cost="120">Снайпер (120)</button>
+                <!-- Сюда можно добавить кнопки для других типов башен -->
+            </div>
+            <div id="game-status"></div>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+<style>
+body {
+    font-family: sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin: 0;
+    background-color: #f0f0f0;
+}
+
+h1 {
+    margin-top: 10px;
+    margin-bottom: 10px;
+}
+
+.game-container {
+    display: flex;
+    margin-top: 10px;
+    border: 2px solid #333;
+    box-shadow: 0 0 10px rgba(0,0,0,0.2);
+}
+
+#gameCanvas {
+    border: 1px solid black;
+    background-color: #e0ffe0; /* Светло-зеленый фон для поля */
+}
+
+.ui-panel {
+    width: 220px;
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-left: 2px solid #333;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.ui-panel div, .ui-panel h3 {
+    font-size: 16px;
+}
+
+.ui-panel h3 {
+    margin-top: 10px;
+    margin-bottom: 5px;
+}
+
+button {
+    padding: 10px 15px;
+    font-size: 16px;
+    cursor: pointer;
+    background-color: #28a745;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    transition: background-color 0.2s;
+}
+
+button:hover {
+    background-color: #7b961c;
+}
+
+button:disabled {
+    background-color: #6c757d;
+    cursor: not-allowed;
+}
+
+#tower-selection button {
+    width: 100%;
+    margin-top: 8px;
+    background-color: #007bff;
+}
+
+#tower-selection button:hover {
+    background-color: #0056b3;
+}
+
+#game-status {
+    margin-top: auto; /* Прижимает статус к низу панели */
+    font-weight: bold;
+    color: red;
+}
+</style>
+<script>
+
+// script.js
+document.addEventListener('DOMContentLoaded', () => {
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // UI Elements
+    const moneyDisplay = document.getElementById('money');
+    const waveDisplay = document.getElementById('wave');
+    const livesDisplay = document.getElementById('lives');
+    const startWaveButton = document.getElementById('startWaveButton');
+    const towerButtons = document.querySelectorAll('.tower-button');
+    const gameStatusDisplay = document.getElementById('game-status');
+    const towersPlacedDisplay = document.createElement('div');
+
+    // Game constants
+    const TILE_SIZE = 40;
+    canvas.width = TILE_SIZE * 20; // 800px
+    canvas.height = TILE_SIZE * 15; // 600px
+    const MAX_TOWERS = 10;
+
+    // Game state
+    let money = 150;
+    let lives = 20;
+    let currentWave = 0;
+    let enemies = [];
+    let towers = [];
+    let projectiles = [];
+    let visualEffects = []; // Для взрывов, телепортов и т.д.
+    let placingTower = null; // { type: 'basic', cost: 50, range: X, splashRadius: Y (optional) }
+    let waveInProgress = false;
+    let gameIsOver = false;
+    let towersPlacedCount = 0;
+    let mouseGridPos = { x: -1, y: -1 }; // Для отображения потенциальной башни
+
+    // Игровой путь (координаты центра клеток)
+    const path = [
+        { x: 0 * TILE_SIZE + TILE_SIZE / 2, y: 7 * TILE_SIZE + TILE_SIZE / 2 },
+        { x: 5 * TILE_SIZE + TILE_SIZE / 2, y: 7 * TILE_SIZE + TILE_SIZE / 2 },
+        { x: 5 * TILE_SIZE + TILE_SIZE / 2, y: 3 * TILE_SIZE + TILE_SIZE / 2 },
+        { x: 12 * TILE_SIZE + TILE_SIZE / 2, y: 3 * TILE_SIZE + TILE_SIZE / 2 },
+        { x: 12 * TILE_SIZE + TILE_SIZE / 2, y: 10 * TILE_SIZE + TILE_SIZE / 2 },
+        { x: 19 * TILE_SIZE + TILE_SIZE / 2, y: 10 * TILE_SIZE + TILE_SIZE / 2 },
+        { x: canvas.width + TILE_SIZE, y: 10 * TILE_SIZE + TILE_SIZE / 2 } // Точка за экраном для завершения пути
+    ];
+
+    // --- Классы ---
+
+    class GameObject {
+        constructor(x, y, width, height, color) {
+            this.x = x;
+            this.y = y;
+            this.width = width;
+            this.height = height;
+            this.color = color;
+            this.id = Math.random().toString(36).substr(2, 9); // Уникальный ID для отладки
+        }
+
+        draw(context) {
+            context.fillStyle = this.color;
+            context.fillRect(this.x - this.width / 2, this.y - this.height / 2, this.width, this.height);
+        }
+
+        // Метод update будет у наследников
+    }
+
+    class Tower extends GameObject {
+        constructor(x, y, type, cost, range, fireRate, projectileDamage, projectileSpeed, color = 'blue', splashRadius = 0) {
+            super(x, y, TILE_SIZE * 0.8, TILE_SIZE * 0.8, color);
+            this.type = type;
+            this.cost = cost;
+            this.range = range;
+            this.fireRate = fireRate; // Выстрелов в секунду
+            this.projectileDamage = projectileDamage;
+            this.projectileSpeed = projectileSpeed;
+            this.lastShotTime = 0;
+            this.target = null; // Ссылка на объект врага
+            this.splashRadius = splashRadius;
+            this.isHovered = false;
+        }
+
+        draw(context) {
+            super.draw(context);
+            if (this.isHovered || (placingTower && this.x === mouseGridPos.x && this.y === mouseGridPos.y)) {
+                context.beginPath();
+                context.arc(this.x, this.y, this.range, 0, Math.PI * 2);
+                context.strokeStyle = 'rgba(0, 0, 255, 0.3)';
+                context.lineWidth = 2;
+                context.stroke();
+                context.lineWidth = 1;
+
+                if (this.splashRadius > 0) {
+                    context.beginPath();
+                    context.arc(this.x, this.y, this.splashRadius, 0, Math.PI * 2);
+                    context.strokeStyle = 'rgba(255, 165, 0, 0.3)';
+                    context.stroke();
+                }
+            }
+            this.isHovered = false;
+        }
+
+        findTarget(activeEnemies) {
+            this.target = null;
+            let closestDistanceSq = this.range * this.range;
+            for (const enemy of activeEnemies) {
+                // Не стреляем по уже мертвым (хотя их должны быстро удалять)
+                if (enemy.health <= 0) continue;
+
+                const dx = enemy.x - this.x;
+                const dy = enemy.y - this.y;
+                const distanceSq = dx * dx + dy * dy;
+                if (distanceSq < closestDistanceSq) {
+                    closestDistanceSq = distanceSq;
+                    this.target = enemy;
+                }
+            }
+        }
+
+        shoot(currentTime) {
+            if (this.target && this.target.health > 0 && currentTime - this.lastShotTime > 1000 / this.fireRate) {
+                projectiles.push(new Projectile(this.x, this.y, this.target, this.projectileDamage, this.projectileSpeed, this.splashRadius, this.type === 'splash' ? 'orange' : 'yellow'));
+                this.lastShotTime = currentTime;
+            }
+        }
+
+        update(currentTime, activeEnemies) {
+            this.findTarget(activeEnemies);
+            this.shoot(currentTime);
+        }
+    }
+
+    class Enemy extends GameObject {
+        constructor(x, y, speed, health, reward, type = 'normal', color = 'red', sizeFactor = 0.6) {
+            super(x, y, TILE_SIZE * sizeFactor, TILE_SIZE * sizeFactor, color);
+            this.speed = speed;
+            this.currentSpeed = speed; // Для эффектов
+            this.health = health;
+            this.maxHealth = health;
+            this.reward = reward;
+            this.pathIndex = 0;
+            this.type = type;
+
+            this.isTeleporting = false;
+            this.teleportCooldown = 3000 + Math.random() * 2000; // мс, с разбросом
+            this.lastTeleportTime = Date.now();
+            this.teleportDistanceFactor = 2.5; // на сколько TILE_SIZE телепортироваться
+        }
+
+        draw(context) {
+            super.draw(context);
+            // Полоска здоровья
+            const barWidth = this.width;
+            const barHeight = 5;
+            context.fillStyle = '#555';
+            context.fillRect(this.x - barWidth / 2, this.y - this.height / 2 - barHeight - 3, barWidth, barHeight);
+            const healthPercentage = this.health / this.maxHealth;
+            context.fillStyle = healthPercentage > 0.6 ? 'green' : healthPercentage > 0.3 ? 'orange' : 'darkred';
+            const hpWidth = barWidth * healthPercentage;
+            context.fillRect(this.x - barWidth / 2, this.y - this.height / 2 - barHeight - 3, hpWidth > 0 ? hpWidth : 0, barHeight);
+
+            if (this.type === 'boss') {
+                context.fillStyle = 'gold';
+                context.font = `${this.height * 0.8}px Arial`;
+                context.textAlign = 'center';
+                context.fillText('👑', this.x, this.y - this.height / 2 - barHeight - 5);
+            }
+        }
+
+        move() {
+            if (this.pathIndex >= path.length) return; // Уже за пределами видимого пути
+
+            if (this.type === 'teleporter' && !this.isTeleporting && Date.now() - this.lastTeleportTime > this.teleportCooldown) {
+                this.attemptTeleport();
+            }
+
+            const targetPoint = path[this.pathIndex];
+            const dx = targetPoint.x - this.x;
+            const dy = targetPoint.y - this.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            if (distance < this.currentSpeed) {
+                this.x = targetPoint.x;
+                this.y = targetPoint.y;
+                this.pathIndex++;
+            } else {
+                this.x += (dx / distance) * this.currentSpeed;
+                this.y += (dy / distance) * this.currentSpeed;
+            }
+        }
+
+        attemptTeleport() {
+            if (this.pathIndex >= path.length - 2) return; // Не телепортируемся у самого выхода
+
+            this.isTeleporting = true;
+            this.lastTeleportTime = Date.now();
+            const oldX = this.x;
+            const oldY = this.y;
+
+            let distanceToTeleport = TILE_SIZE * this.teleportDistanceFactor;
+            let tempPathIndex = this.pathIndex;
+            let currentPos = { x: this.x, y: this.y };
+
+            while (distanceToTeleport > 0 && tempPathIndex < path.length -1) {
+                const nextNode = path[tempPathIndex];
+                const dxNode = nextNode.x - currentPos.x;
+                const dyNode = nextNode.y - currentPos.y;
+                const distToNextNode = Math.sqrt(dxNode*dxNode + dyNode*dyNode);
+
+                if (distanceToTeleport >= distToNextNode) {
+                    distanceToTeleport -= distToNextNode;
+                    currentPos.x = nextNode.x;
+                    currentPos.y = nextNode.y;
+                    tempPathIndex++;
+                } else {
+                    const ratio = distanceToTeleport / distToNextNode;
+                    currentPos.x += dxNode * ratio;
+                    currentPos.y += dyNode * ratio;
+                    distanceToTeleport = 0;
+                }
+            }
+            this.x = currentPos.x;
+            this.y = currentPos.y;
+            this.pathIndex = tempPathIndex;
+
+            visualEffects.push(new VisualEffect(oldX, oldY, TILE_SIZE * 0.7, 'rgba(128,0,128,0.7)', 200, 'puff'));
+            visualEffects.push(new VisualEffect(this.x, this.y, TILE_SIZE * 0.9, 'rgba(128,0,128,0.7)', 300, 'puff'));
+            setTimeout(() => { this.isTeleporting = false; }, 500); // Короткая задержка после телепорта
+        }
+
+
+        takeDamage(amount) {
+            this.health -= amount;
+            if (this.health <= 0) {
+                this.health = 0; // Убедимся, что здоровье не отрицательное
+                money += this.reward;
+                updateUIDisplay();
+                return true; // Враг убит
+            }
+            return false; // Враг жив
+        }
+
+        update() {
+            this.move();
+            // Проверка, достиг ли враг конца (последней точки массива path, которая за экраном)
+            if (this.pathIndex >= path.length -1 && (this.x >= path[path.length-1].x -this.currentSpeed || this.x > canvas.width)) {
+                lives--;
+                updateUIDisplay();
+                if (lives <= 0 && !gameIsOver) {
+                    gameOver();
+                }
+                return true; // Враг достиг базы и должен быть удален
+            }
+            return false; // Враг все еще на пути
+        }
+    }
+
+    class Projectile extends GameObject {
+        constructor(x, y, target, damage, speed, splashRadius = 0, color = 'yellow') {
+            super(x, y, TILE_SIZE * (splashRadius > 0 ? 0.3 : 0.2), TILE_SIZE * (splashRadius > 0 ? 0.3 : 0.2), color);
+            this.target = target; // Ссылка на объект врага
+            this.damage = damage;
+            this.speed = speed;
+            this.splashRadius = splashRadius;
+            this.targetLastPos = { x: target.x, y: target.y }; // На случай если цель умрет до попадания
+        }
+
+        update(activeEnemies) { // Передаем activeEnemies для сплеш-урона
+            let currentTargetX, currentTargetY;
+            let targetIsAlive = this.target && this.target.health > 0;
+
+            if (targetIsAlive) {
+                this.targetLastPos = { x: this.target.x, y: this.target.y };
+                currentTargetX = this.target.x;
+                currentTargetY = this.target.y;
+            } else {
+                // Цель мертва или потеряна, летим в последнюю известную позицию
+                currentTargetX = this.targetLastPos.x;
+                currentTargetY = this.targetLastPos.y;
+            }
+
+            const dx = currentTargetX - this.x;
+            const dy = currentTargetY - this.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            const hitDistance = this.speed + (targetIsAlive ? this.target.width / 2 : 0);
+
+            if (distance < hitDistance) {
+                // Попадание
+                if (targetIsAlive) {
+                    this.target.takeDamage(this.damage);
+                }
+                if (this.splashRadius > 0) {
+                    this.applySplashDamage(activeEnemies);
+                }
+                return true; // Снаряд должен быть удален
+            } else {
+                this.x += (dx / distance) * this.speed;
+                this.y += (dy / distance) * this.speed;
+            }
+            return false; // Снаряд в полете
+        }
+
+        applySplashDamage(activeEnemies) {
+            visualEffects.push(new VisualEffect(this.x, this.y, this.splashRadius * 2, 'rgba(255,165,0,0.5)', 250, 'explosion'));
+            activeEnemies.forEach(enemy => {
+                if (enemy.health <= 0 || enemy === this.target) return; // Не бьем уже мертвых или основную цель (ее уже ударили)
+
+                const dx = enemy.x - this.x;
+                const dy = enemy.y - this.y;
+                const distanceSq = dx * dx + dy * dy;
+                if (distanceSq < this.splashRadius * this.splashRadius) {
+                    enemy.takeDamage(this.damage * 0.6); // Урон по области, например, 60% от основного
+                }
+            });
+        }
+    }
+
+    class VisualEffect extends GameObject {
+        constructor(x, y, size, color, duration, type = 'explosion') {
+            super(x, y, size, size, color); // width/height здесь условны
+            this.initialSize = size;
+            this.duration = duration;
+            this.createdAt = Date.now();
+            this.type = type;
+        }
+
+        draw(context) {
+            const elapsed = Date.now() - this.createdAt;
+            const progress = Math.min(elapsed / this.duration, 1);
+
+            context.globalAlpha = 1 - progress;
+            if (this.type === 'explosion') {
+                context.beginPath();
+                context.arc(this.x, this.y, this.initialSize * progress * 0.5, 0, Math.PI * 2); // Уменьшил радиус прогресса
+                context.fillStyle = this.color;
+                context.fill();
+            } else if (this.type === 'puff') {
+                 context.beginPath();
+                 context.arc(this.x, this.y, this.initialSize * (0.3 + progress * 0.7), 0, Math.PI * 2);
+                 context.fillStyle = this.color;
+                 context.fill();
+            }
+            context.globalAlpha = 1;
+        }
+
+        update() {
+            return Date.now() - this.createdAt > this.duration; // True если эффект закончился
+        }
+    }
+
+    // --- Функции игры ---
+
+    function updateUIDisplay() {
+        moneyDisplay.textContent = money;
+        waveDisplay.textContent = currentWave;
+        livesDisplay.textContent = lives;
+        towersPlacedDisplay.textContent = `Башни: ${towersPlacedCount}/${MAX_TOWERS}`;
+    }
+
+    function drawPath() {
+        ctx.strokeStyle = '#bababa'; // Светлее
+        ctx.lineWidth = TILE_SIZE * 0.85;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.beginPath();
+        if (path.length > 0) {
+            ctx.moveTo(path[0].x, path[0].y);
+            for (let i = 1; i < path.length - 1; i++) { // -1 чтобы не рисовать до конечной точки за экраном
+                ctx.lineTo(path[i].x, path[i].y);
+            }
+        }
+        ctx.stroke();
+        ctx.lineWidth = 1;
+        ctx.lineCap = "butt";
+        ctx.lineJoin = "miter";
+    }
+
+    function drawGrid() {
+        ctx.strokeStyle = '#e0e0e0';
+        ctx.lineWidth = 0.5;
+        for (let x = 0; x <= canvas.width; x += TILE_SIZE) {
+            ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+        }
+        for (let y = 0; y <= canvas.height; y += TILE_SIZE) {
+            ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+        }
+        ctx.lineWidth = 1;
+    }
+
+    let waveEnemiesToSpawn = 0;
+    let spawnIntervalId = null;
+    let spawnCounter = 0;
+
+    function spawnEnemyLogic() {
+        const startPoint = path[0];
+        let baseHealth = 50 + currentWave * 20;
+        let baseSpeed = 1 + currentWave * 0.04;
+        let baseReward = 8 + Math.floor(currentWave / 2);
+
+        let enemyType = 'normal';
+        let health = baseHealth;
+        let speed = baseSpeed;
+        let reward = baseReward;
+        let color = '#c0392b'; // Красный
+        let sizeFactor = 0.6;
+
+        // Босс на каждой 10-й волне
+        if (currentWave > 0 && currentWave % 10 === 0 && spawnCounter === Math.floor(waveEnemiesToSpawn / 2) && !enemies.some(e => e.type === 'boss')) {
+            enemyType = 'boss';
+            health = baseHealth * 15 + currentWave * 50;
+            speed = baseSpeed * 0.35;
+            reward = baseReward * 15;
+            color = '#2c3e50'; // Темно-синий/черный
+            sizeFactor = 0.95;
+            enemies.push(new Enemy(startPoint.x, startPoint.y, speed, health, reward, enemyType, color, sizeFactor));
+            return; // Спавним только босса в этот момент
+        }
+
+        // Разнообразие обычных врагов
+        const randomFactor = Math.random();
+        if (currentWave > 1 && randomFactor < 0.30) {
+            enemyType = 'fast';
+            health *= 0.55;
+            speed *= 1.9;
+            reward = Math.ceil(reward * 1.1);
+            color = '#e74c3c'; // Ярко-красный
+            sizeFactor = 0.45;
+        } else if (currentWave > 3 && randomFactor < 0.55) { // (0.30 + 0.25)
+            enemyType = 'tank';
+            health *= 2.8;
+            speed *= 0.55;
+            reward = Math.ceil(reward * 1.3);
+            color = '#7f8c8d'; // Серый
+            sizeFactor = 0.75;
+        } else if (currentWave > 5 && randomFactor < 0.65) { // (0.55 + 0.10)
+            enemyType = 'teleporter';
+            health *= 0.9;
+            speed *= 1.05;
+            reward = Math.ceil(reward * 1.5);
+            color = '#8e44ad'; // Фиолетовый
+            sizeFactor = 0.55;
+        }
+
+        enemies.push(new Enemy(startPoint.x, startPoint.y, speed, health, reward, enemyType, color, sizeFactor));
+    }
+
+    function startNewWave() {
+        if (waveInProgress || gameIsOver) return;
+        waveInProgress = true;
+        currentWave++;
+        waveEnemiesToSpawn = 7 + currentWave * 3;
+        if (currentWave > 0 && currentWave % 10 === 0) {
+            waveEnemiesToSpawn = Math.max(1, Math.floor(waveEnemiesToSpawn * 0.6)); // Меньше обычных врагов + 1 босс
+        }
+        spawnCounter = 0;
+        updateUIDisplay();
+        startWaveButton.disabled = true;
+        gameStatusDisplay.textContent = `Волна ${currentWave} началась!`;
+
+        spawnIntervalId = setInterval(() => {
+            if (spawnCounter < waveEnemiesToSpawn) {
+                spawnEnemyLogic();
+                spawnCounter++;
+            } else {
+                clearInterval(spawnIntervalId);
+                spawnIntervalId = null;
+                // Волна продолжается, пока есть враги или пока не все отспавнились
+            }
+        }, 1300 - Math.min(1000, currentWave * 30));
+    }
+
+    canvas.addEventListener('mousemove', (event) => {
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        mouseGridPos.x = Math.floor(x / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2;
+        mouseGridPos.y = Math.floor(y / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2;
+
+        towers.forEach(tower => {
+            const distSq = (mouseGridPos.x - tower.x)*(mouseGridPos.x - tower.x) + (mouseGridPos.y - tower.y)*(mouseGridPos.y - tower.y);
+            tower.isHovered = distSq < (TILE_SIZE * 0.5) * (TILE_SIZE * 0.5);
+        });
+    });
+
+    function isCellOnPath(gridX, gridY) {
+        const checkRadius = TILE_SIZE * 0.55; // Немного больше половины клетки
+        for (let i = 0; i < path.length - 1; i++) {
+            const p1 = path[i];
+            const p2 = path[i+1];
+            // Проверка расстояния от точки (gridX, gridY) до отрезка (p1,p2)
+            const lenSq = (p1.x-p2.x)**2 + (p1.y-p2.y)**2;
+            if (lenSq === 0) { // Точки совпадают
+                if ((gridX-p1.x)**2 + (gridY-p1.y)**2 < checkRadius**2) return true;
+                continue;
+            }
+            let t = ((gridX - p1.x) * (p2.x - p1.x) + (gridY - p1.y) * (p2.y - p1.y)) / lenSq;
+            t = Math.max(0, Math.min(1, t));
+            const closestX = p1.x + t * (p2.x - p1.x);
+            const closestY = p1.y + t * (p2.y - p1.y);
+            if ((gridX-closestX)**2 + (gridY-closestY)**2 < checkRadius**2) return true;
+        }
+        return false;
+    }
+
+    function isCellBuildable(gridX, gridY) {
+        // 1. Не выходит ли за пределы поля (уже учтено мышью)
+        // 2. Не на пути ли башня
+        if (isCellOnPath(gridX, gridY)) return false;
+
+        // 3. Не слишком ли далеко от пути (проверка соседних клеток с путем)
+        let nearPath = false;
+        const buildDistance = TILE_SIZE * 2.5; // Макс. расстояние от пути для строительства
+        for (const p of path) {
+            if (Math.sqrt((gridX - p.x)**2 + (gridY - p.y)**2) < buildDistance) {
+                nearPath = true;
+                break;
+            }
+        }
+        if (!nearPath) return false;
+
+        // 4. Нет ли уже башни на этом месте
+        for (const tower of towers) {
+            if (tower.x === gridX && tower.y === gridY) return false;
+        }
+        return true;
+    }
+
+    function handleTowerPlacement(event) {
+        if (!placingTower || gameIsOver) return;
+
+        const gridX = mouseGridPos.x;
+        const gridY = mouseGridPos.y;
+
+        if (towersPlacedCount >= MAX_TOWERS) {
+            gameStatusDisplay.textContent = `Достигнут лимит башен (${MAX_TOWERS})!`;
+            placingTower = null; // Сбросить выбор, чтобы не было зависшего предпросмотра
+            setTimeout(() => gameStatusDisplay.textContent = "", 2000);
+            return;
+        }
+
+        if (!isCellBuildable(gridX, gridY)) {
+            gameStatusDisplay.textContent = "Здесь нельзя строить!";
+             setTimeout(() => gameStatusDisplay.textContent = "", 2000);
+            return;
+        }
+
+        if (money >= placingTower.cost) {
+            money -= placingTower.cost;
+            let newTower;
+            // Параметры башен: x, y, type, cost, range, fireRate, damage, projSpeed, color, splashRadius
+            switch (placingTower.type) {
+                case 'basic':
+                    newTower = new Tower(gridX, gridY, 'basic', 50, TILE_SIZE * 3.2, 1.6, 25, 7, '#3498db');
+                    break;
+                case 'sniper':
+                    newTower = new Tower(gridX, gridY, 'sniper', 120, TILE_SIZE * 6.0, 0.45, 110, 10, '#27ae60');
+                    break;
+                case 'splash':
+                    newTower = new Tower(gridX, gridY, 'splash', 100, TILE_SIZE * 2.7, 1.1, 35, 6, '#e67e22', TILE_SIZE * 1.4);
+                    break;
+            }
+            towers.push(newTower);
+            towersPlacedCount++;
+            updateUIDisplay();
+            gameStatusDisplay.textContent = `Башня ${placingTower.type} построена!`;
+        } else {
+            gameStatusDisplay.textContent = "Недостаточно денег!";
+        }
+        placingTower = null;
+        // mouseGridPos = { x: -1, y: -1 }; // Не нужно, mousemove обновит
+        setTimeout(() => gameStatusDisplay.textContent = (waveInProgress && !gameIsOver) ? `Волна ${currentWave} идет...` : "", 2000);
+    }
+
+    function gameOver() {
+        if (gameIsOver) return;
+        gameIsOver = true;
+        waveInProgress = false;
+        if (spawnIntervalId) clearInterval(spawnIntervalId);
+        startWaveButton.disabled = true;
+        gameStatusDisplay.textContent = `ИГРА ОКОНЧЕНА! Волн: ${currentWave > 0 ? currentWave : 0}.`;
+        console.log("Игра окончена!");
+    }
+
+    // --- Игровой цикл ---
+    let lastTime = 0;
+    function gameLoop(currentTime) {
+        if (gameIsOver) {
+            ctx.fillStyle = "rgba(40,40,40,0.85)";
+            ctx.fillRect(0,0,canvas.width, canvas.height);
+            ctx.font = "bold 48px Arial"; ctx.textAlign = "center";
+            ctx.fillStyle = "white";
+            ctx.fillText("ИГРА ОКОНЧЕНА", canvas.width/2, canvas.height/2 - 50);
+            ctx.font = "28px Arial";
+            ctx.fillText(`Вы продержались: ${currentWave > 0 ? currentWave : 0} волн`, canvas.width/2, canvas.height/2);
+            ctx.font = "22px Arial";
+            ctx.fillText(`Деньги: ${money}`, canvas.width/2, canvas.height/2 + 40);
+            ctx.font = "16px Arial";
+            ctx.fillText("Обновите страницу, чтобы начать заново.", canvas.width/2, canvas.height/2 + 80);
+            return;
+        }
+
+        const deltaTime = (currentTime - lastTime) / 1000; // В секундах
+        lastTime = currentTime;
+
+        // 1. Update logic
+        towers.forEach(tower => tower.update(currentTime, enemies));
+
+        // Обновляем и фильтруем снаряды
+        projectiles = projectiles.filter(p => !p.update(enemies));
+
+        // Обновляем и фильтруем врагов (используем обратный цикл для безопасного удаления)
+        for (let i = enemies.length - 1; i >= 0; i--) {
+            const enemy = enemies[i];
+            if (enemy.health <= 0) { // Если враг убит (например, снарядом)
+                visualEffects.push(new VisualEffect(enemy.x, enemy.y, enemy.width * 1.6, 'rgba(200,50,50,0.4)', 180, 'explosion'));
+                enemies.splice(i, 1);
+            } else if (enemy.update()) { // Если enemy.update() вернул true (достиг базы)
+                enemies.splice(i, 1);
+            }
+        }
+
+        // Обновляем и фильтруем визуальные эффекты
+        visualEffects = visualEffects.filter(effect => !effect.update());
+
+
+        // Проверка на завершение волны
+        if (waveInProgress && spawnCounter >= waveEnemiesToSpawn && enemies.length === 0 && spawnIntervalId === null) {
+            waveInProgress = false;
+            startWaveButton.disabled = false;
+            gameStatusDisplay.textContent = `Волна ${currentWave} завершена! Готовьтесь к следующей.`;
+            money += 100 + currentWave * 10; // Бонус за волну
+            updateUIDisplay();
+        }
+
+        // 2. Draw everything
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        drawGrid();
+        drawPath();
+        towers.forEach(tower => tower.draw(ctx));
+        enemies.forEach(enemy => enemy.draw(ctx));
+        projectiles.forEach(projectile => projectile.draw(ctx));
+        visualEffects.forEach(effect => effect.draw(ctx));
+
+
+        // Отрисовка предварительного размещения башни
+        if (placingTower && mouseGridPos.x !== -1) {
+            const canPlace = towersPlacedCount < MAX_TOWERS &&
+                             money >= placingTower.cost &&
+                             isCellBuildable(mouseGridPos.x, mouseGridPos.y);
+
+            ctx.globalAlpha = 0.6;
+            let previewTowerColor = canPlace ? 'rgba(0, 200, 0, 0.4)' : 'rgba(200, 0, 0, 0.4)';
+            ctx.fillStyle = previewTowerColor;
+            ctx.fillRect(mouseGridPos.x - TILE_SIZE * 0.4, mouseGridPos.y - TILE_SIZE * 0.4, TILE_SIZE * 0.8, TILE_SIZE * 0.8);
+
+            ctx.beginPath();
+            ctx.arc(mouseGridPos.x, mouseGridPos.y, placingTower.range, 0, Math.PI * 2);
+            ctx.strokeStyle = canPlace ? 'rgba(0, 255, 0, 0.5)' : 'rgba(255,0,0,0.5)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+             if (placingTower.splashRadius > 0) {
+                ctx.beginPath();
+                ctx.arc(mouseGridPos.x, mouseGridPos.y, placingTower.splashRadius, 0, Math.PI * 2);
+                ctx.strokeStyle = canPlace ? 'rgba(255, 165, 0, 0.5)' : 'rgba(100,70,0,0.5)';
+                ctx.stroke();
+            }
+            ctx.lineWidth = 1;
+            ctx.globalAlpha = 1.0;
+        }
+
+        requestAnimationFrame(gameLoop);
+    }
+
+    // --- Инициализация UI и событий ---
+    function init() {
+        const uiPanel = document.querySelector('.ui-panel');
+        if (uiPanel) {
+            const towerSelectionDiv = document.getElementById('tower-selection');
+            if (towerSelectionDiv) {
+                 uiPanel.insertBefore(towersPlacedDisplay, towerSelectionDiv);
+            } else {
+                uiPanel.appendChild(towersPlacedDisplay); // Если нет tower-selection, добавляем в конец
+            }
+        } else {
+            document.body.appendChild(towersPlacedDisplay); // Крайний случай
+        }
+        updateUIDisplay();
+
+        startWaveButton.addEventListener('click', startNewWave);
+
+        towerButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                if (gameIsOver || waveInProgress && towersPlacedCount >= MAX_TOWERS) return; // Нельзя выбирать башню во время волны если лимит
+
+                const type = button.dataset.type;
+                const cost = parseInt(button.dataset.cost);
+
+                if (towersPlacedCount >= MAX_TOWERS) {
+                    gameStatusDisplay.textContent = `Достигнут лимит башен (${MAX_TOWERS})!`;
+                    setTimeout(() => gameStatusDisplay.textContent = "", 2000);
+                    return;
+                }
+
+                if (money >= cost) {
+                    let range = 0, splashRadius = 0;
+                    let towerName = "";
+                    switch (type) {
+                        case 'basic': range = TILE_SIZE * 3.2; towerName = "Простая"; break;
+                        case 'sniper': range = TILE_SIZE * 6.0; towerName = "Снайпер"; break;
+                        case 'splash': range = TILE_SIZE * 2.7; splashRadius = TILE_SIZE * 1.4; towerName = "Область"; break;
+                    }
+                    placingTower = { type, cost, range, splashRadius }; // Сохраняем данные для предпросмотра
+                    gameStatusDisplay.textContent = `Выбрана: ${towerName}. Разместите на поле.`;
+                } else {
+                    gameStatusDisplay.textContent = `Недостаточно денег!`;
+                    setTimeout(() => gameStatusDisplay.textContent = "", 2000);
+                }
+            });
+        });
+
+        canvas.addEventListener('click', handleTowerPlacement);
+        canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            if (placingTower) {
+                placingTower = null;
+                gameStatusDisplay.textContent = "Выбор башни отменен.";
+                setTimeout(() => gameStatusDisplay.textContent = "", 2000);
+            }
+        });
+
+        requestAnimationFrame(gameLoop); // Запуск игры
+    }
+
+    init(); // Вызов функции инициализации
+});
+
+</script>
+</html>
