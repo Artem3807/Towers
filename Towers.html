@@ -20,6 +20,7 @@
                 <button class="tower-button" data-type="basic" data-cost="50">Простая Башня (50)</button>
                 <button class="tower-button" data-type="splash" data-cost="100">Область (100)</button>
                 <button class="tower-button" data-type="sniper" data-cost="120">Снайпер (120)</button>
+                <button id="upgradeTowerButton" disabled>Улучшить башню (Стоимость: <span id="upgradeCost">50</span>)</button>
                 <!-- Сюда можно добавить кнопки для других типов башен -->
             </div>
             <div id="game-status"></div>
@@ -108,6 +109,16 @@ button:disabled {
     font-weight: bold;
     color: red;
 }
+
+#upgradeTowerButton {
+    width: 100%;
+    margin-top: 8px;
+    background-color: #8e44ad; /* Фиолетовый цвет */
+}
+
+#upgradeTowerButton:hover {
+    background-color: #732d91;
+}
 </style>
 <script>
 
@@ -129,11 +140,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const TILE_SIZE = 40;
     canvas.width = TILE_SIZE * 20; // 800px
     canvas.height = TILE_SIZE * 15; // 600px
-    const MAX_TOWERS = 10;
+    const MAX_TOWERS = 12;
 
     // Game state
-    let money = 150;
-    let lives = 20;
+    let money = 250;
+    let lives = 30;
     let currentWave = 0;
     let enemies = [];
     let towers = [];
@@ -144,6 +155,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let gameIsOver = false;
     let towersPlacedCount = 0;
     let mouseGridPos = { x: -1, y: -1 }; // Для отображения потенциальной башни
+    //Улучшение башен 
+    let selectedTower = null;
+    let upgradeCost = 25;
 
     // Игровой путь (координаты центра клеток)
     const path = [
@@ -308,15 +322,15 @@ document.addEventListener('DOMContentLoaded', () => {
             const oldX = this.x;
             const oldY = this.y;
 
-            let distanceToTeleport = TILE_SIZE * this.teleportDistanceFactor;
-            let tempPathIndex = this.pathIndex;
-            let currentPos = { x: this.x, y: this.y };
+            let distanceToTeleport = TILE_SIZE * this.teleportDistanceFactor; // Расстояние телепортации
+            let tempPathIndex = this.pathIndex; // Временный индекс пути
+            let currentPos = { x: this.x, y: this.y }; // Текущие координаты
 
             while (distanceToTeleport > 0 && tempPathIndex < path.length -1) {
-                const nextNode = path[tempPathIndex];
+                const nextNode = path[tempPathIndex]; // Следующая точка на пути
                 const dxNode = nextNode.x - currentPos.x;
                 const dyNode = nextNode.y - currentPos.y;
-                const distToNextNode = Math.sqrt(dxNode*dxNode + dyNode*dyNode);
+                const distToNextNode = Math.sqrt(dxNode*dxNode + dyNode*dyNode); // Расстояние до следующей точки
 
                 if (distanceToTeleport >= distToNextNode) {
                     distanceToTeleport -= distToNextNode;
@@ -327,12 +341,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     const ratio = distanceToTeleport / distToNextNode;
                     currentPos.x += dxNode * ratio;
                     currentPos.y += dyNode * ratio;
-                    distanceToTeleport = 0;
+                    distanceToTeleport = 0; // Завершаем
                 }
             }
             this.x = currentPos.x;
             this.y = currentPos.y;
-            this.pathIndex = tempPathIndex;
+            this.pathIndex = tempPathIndex; // Обновляем индекс пути
 
             visualEffects.push(new VisualEffect(oldX, oldY, TILE_SIZE * 0.7, 'rgba(128,0,128,0.7)', 200, 'puff'));
             visualEffects.push(new VisualEffect(this.x, this.y, TILE_SIZE * 0.9, 'rgba(128,0,128,0.7)', 300, 'puff'));
@@ -467,6 +481,8 @@ document.addEventListener('DOMContentLoaded', () => {
         waveDisplay.textContent = currentWave;
         livesDisplay.textContent = lives;
         towersPlacedDisplay.textContent = `Башни: ${towersPlacedCount}/${MAX_TOWERS}`;
+        //улучщение башен
+        document.getElementById('upgradeCost').textContent = upgradeCost;
     }
 
     function drawPath() {
@@ -662,13 +678,13 @@ document.addEventListener('DOMContentLoaded', () => {
             // Параметры башен: x, y, type, cost, range, fireRate, damage, projSpeed, color, splashRadius
             switch (placingTower.type) {
                 case 'basic':
-                    newTower = new Tower(gridX, gridY, 'basic', 50, TILE_SIZE * 3.2, 1.6, 25, 7, '#3498db');
+                    newTower = new Tower(gridX, gridY, 'basic', 100, TILE_SIZE * 3.2, 1.6, 25, 7, '#3498db');
                     break;
                 case 'sniper':
                     newTower = new Tower(gridX, gridY, 'sniper', 120, TILE_SIZE * 6.0, 0.45, 110, 10, '#27ae60');
                     break;
                 case 'splash':
-                    newTower = new Tower(gridX, gridY, 'splash', 100, TILE_SIZE * 2.7, 1.1, 35, 6, '#e67e22', TILE_SIZE * 1.4);
+                    newTower = new Tower(gridX, gridY, 'splash', 150, TILE_SIZE * 2.7, 1.1, 35, 6, '#e67e22', TILE_SIZE * 1.4);
                     break;
             }
             towers.push(newTower);
@@ -783,62 +799,106 @@ document.addEventListener('DOMContentLoaded', () => {
         requestAnimationFrame(gameLoop);
     }
 
+    function upgradeTower() {
+    if (!selectedTower || money < upgradeCost) {
+        gameStatusDisplay.textContent = "Выберите башню или недостаточно денег!";
+        setTimeout(() => gameStatusDisplay.textContent = "", 2000);
+        return;
+    }
+
+    money -= upgradeCost;
+    if (selectedTower.type === 'sniper') {
+        selectedTower.projectileDamage *= 1.5;
+    } else {
+        selectedTower.projectileDamage *= 1.7;
+    }
+    upgradeCost *= 2; // Увеличение стоимости улучшения в 2 раза
+    updateUIDisplay();
+    gameStatusDisplay.textContent = `Башня улучшена! Новый урон: ${selectedTower.projectileDamage}`;
+    setTimeout(() => gameStatusDisplay.textContent = "", 2000);
+}
+
+
     // --- Инициализация UI и событий ---
     function init() {
-        const uiPanel = document.querySelector('.ui-panel');
-        if (uiPanel) {
-            const towerSelectionDiv = document.getElementById('tower-selection');
-            if (towerSelectionDiv) {
-                 uiPanel.insertBefore(towersPlacedDisplay, towerSelectionDiv);
-            } else {
-                uiPanel.appendChild(towersPlacedDisplay); // Если нет tower-selection, добавляем в конец
-            }
+    const uiPanel = document.querySelector('.ui-panel');
+    if (uiPanel) {
+        const towerSelectionDiv = document.getElementById('tower-selection');
+        if (towerSelectionDiv) {
+            uiPanel.insertBefore(towersPlacedDisplay, towerSelectionDiv);
         } else {
-            document.body.appendChild(towersPlacedDisplay); // Крайний случай
+            uiPanel.appendChild(towersPlacedDisplay);
         }
-        updateUIDisplay();
+    } else {
+        document.body.appendChild(towersPlacedDisplay);
+    }
+    updateUIDisplay();
 
-        startWaveButton.addEventListener('click', startNewWave);
+    startWaveButton.addEventListener('click', startNewWave);
+    document.getElementById('upgradeTowerButton').addEventListener('click', upgradeTower);
 
-        towerButtons.forEach(button => {
-            button.addEventListener('click', () => {
-                if (gameIsOver || waveInProgress && towersPlacedCount >= MAX_TOWERS) return; // Нельзя выбирать башню во время волны если лимит
 
-                const type = button.dataset.type;
-                const cost = parseInt(button.dataset.cost);
+    towerButtons.forEach(button => {
+        button.addEventListener('click', () => {
+            if (gameIsOver || waveInProgress && towersPlacedCount >= MAX_TOWERS) return;
 
-                if (towersPlacedCount >= MAX_TOWERS) {
-                    gameStatusDisplay.textContent = `Достигнут лимит башен (${MAX_TOWERS})!`;
-                    setTimeout(() => gameStatusDisplay.textContent = "", 2000);
-                    return;
+            const type = button.dataset.type;
+            const cost = parseInt(button.dataset.cost);
+
+            if (towersPlacedCount >= MAX_TOWERS) {
+                gameStatusDisplay.textContent = `Достигнут лимит башен (${MAX_TOWERS})!`;
+                setTimeout(() => gameStatusDisplay.textContent = "", 2000);
+                return;
+            }
+
+            if (money >= cost) {
+                let range = 0, splashRadius = 0;
+                let towerName = "";
+                switch (type) {
+                    case 'basic': range = TILE_SIZE * 3.2; towerName = "Простая"; break;
+                    case 'sniper': range = TILE_SIZE * 6.0; towerName = "Снайпер"; break;
+                    case 'splash': range = TILE_SIZE * 2.7; splashRadius = TILE_SIZE * 1.4; towerName = "Область"; break;
                 }
-
-                if (money >= cost) {
-                    let range = 0, splashRadius = 0;
-                    let towerName = "";
-                    switch (type) {
-                        case 'basic': range = TILE_SIZE * 3.2; towerName = "Простая"; break;
-                        case 'sniper': range = TILE_SIZE * 6.0; towerName = "Снайпер"; break;
-                        case 'splash': range = TILE_SIZE * 2.7; splashRadius = TILE_SIZE * 1.4; towerName = "Область"; break;
-                    }
-                    placingTower = { type, cost, range, splashRadius }; // Сохраняем данные для предпросмотра
-                    gameStatusDisplay.textContent = `Выбрана: ${towerName}. Разместите на поле.`;
-                } else {
-                    gameStatusDisplay.textContent = `Недостаточно денег!`;
-                    setTimeout(() => gameStatusDisplay.textContent = "", 2000);
-                }
-            });
-        });
-
-        canvas.addEventListener('click', handleTowerPlacement);
-        canvas.addEventListener('contextmenu', (e) => {
-            e.preventDefault();
-            if (placingTower) {
-                placingTower = null;
-                gameStatusDisplay.textContent = "Выбор башни отменен.";
+                placingTower = { type, cost, range, splashRadius };
+                gameStatusDisplay.textContent = `Выбрана: ${towerName}. Разместите на поле.`;
+            } else {
+                gameStatusDisplay.textContent = `Недостаточно денег!`;
                 setTimeout(() => gameStatusDisplay.textContent = "", 2000);
             }
         });
+    });
+
+    canvas.addEventListener('click', (event) => {
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        const gridX = Math.floor(x / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2;
+        const gridY = Math.floor(y / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2;
+
+        // Проверка на улучшение башен
+        for (const tower of towers) {
+            const distSq = (gridX - tower.x) * (gridX - tower.x) + (gridY - tower.y) * (gridY - tower.y);
+            if (distSq < (TILE_SIZE * 0.5) * (TILE_SIZE * 0.5)) {
+                selectedTower = tower;
+                document.getElementById('upgradeTowerButton').disabled = false;
+                gameStatusDisplay.textContent = `Выбрана башня для улучшения!`;
+                setTimeout(() => gameStatusDisplay.textContent = "", 2000);
+                return;
+            }
+        }
+
+        handleTowerPlacement(event);
+    });
+
+
+    canvas.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        if (placingTower) {
+            placingTower = null;
+            gameStatusDisplay.textContent = "Выбор башни отменен.";
+            setTimeout(() => gameStatusDisplay.textContent = "", 2000);
+        }
+    });
 
         requestAnimationFrame(gameLoop); // Запуск игры
     }
